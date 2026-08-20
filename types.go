@@ -12,15 +12,20 @@ type Runtime interface {
 
 // Request represents a user message forwarded from an IM platform.
 type Request struct {
-	Prompt        string
-	SessionID     string
+	Prompt    string
+	SessionID string
+	// MessageID is the originating platform message ID, useful for runtimes
+	// that scope attachments or state per message. It may be empty for
+	// synthesized messages.
+	MessageID     string
 	ContentBlocks []ContentBlock
 }
 
-// ContentBlock carries multimodal content (e.g., images).
+// ContentBlock carries multimodal content (e.g., images, files).
 type ContentBlock struct {
-	Type      string // e.g. "image"
+	Type      string // e.g. "image" or "file"
 	MediaType string // e.g. "image/png"
+	FileName  string // original file name (for "file" blocks)
 	Data      string // base64-encoded data
 }
 

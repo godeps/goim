@@ -92,7 +92,7 @@ func newSession(rt Runtime, sessionID string) *Session {
 	return s
 }
 
-func (s *Session) Send(prompt string, images []core.ImageAttachment, files []core.FileAttachment) error {
+func (s *Session) Send(prompt string, messageID string, images []core.ImageAttachment, files []core.FileAttachment) error {
 	if !s.Alive() {
 		return fmt.Errorf("session %s is closed", s.sessionID)
 	}
@@ -109,6 +109,7 @@ func (s *Session) Send(prompt string, images []core.ImageAttachment, files []cor
 	req := Request{
 		Prompt:    prompt,
 		SessionID: s.sessionID,
+		MessageID: messageID,
 	}
 
 	// Convert images to multimodal content blocks (base64-encoded).
@@ -117,6 +118,17 @@ func (s *Session) Send(prompt string, images []core.ImageAttachment, files []cor
 			Type:      "image",
 			MediaType: img.MimeType,
 			Data:      base64.StdEncoding.EncodeToString(img.Data),
+		})
+	}
+
+	// Convert document files to "document" content blocks so runtimes can
+	// receive attachments alongside the prompt (images stay "image" blocks).
+	for _, f := range files {
+		req.ContentBlocks = append(req.ContentBlocks, ContentBlock{
+			Type:      "document",
+			MediaType: f.MimeType,
+			FileName:  f.FileName,
+			Data:      base64.StdEncoding.EncodeToString(f.Data),
 		})
 	}
 
