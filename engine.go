@@ -1,7 +1,7 @@
 package goim
 
 import (
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/godeps/cc-connect/core"
 )
 
 // Engine wraps cc-connect's core.Engine with goim-specific configuration.

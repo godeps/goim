@@ -9,7 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/godeps/cc-connect/core"
 )
 
 // Agent implements core.Agent by wrapping a Runtime.

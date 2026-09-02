@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/chenhg5/cc-connect v1.6.0
+	github.com/godeps/cc-connect v1.6.1
 )
 
 require (
@@ -21,5 +21,3 @@ require (
 	golang.org/x/crypto v0.50.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 )
-
-replace github.com/chenhg5/cc-connect v1.6.0 => github.com/cinience/cc-connect v1.6.0

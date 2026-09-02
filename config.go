@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
-	"github.com/chenhg5/cc-connect/core"
+	"github.com/godeps/cc-connect/core"
 )
 
 // Config is a simplified subset of cc-connect's config.toml focused on the
