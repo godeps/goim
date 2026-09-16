@@ -29,6 +29,26 @@ type ContentBlock struct {
 	Data      string // base64-encoded data
 }
 
+// Attachment is a file sent from the host application to an IM platform. It
+// mirrors ContentBlock for the outbound direction.
+type Attachment struct {
+	// Kind selects the transport. Empty means "infer from MimeType".
+	Kind     string
+	MimeType string
+	FileName string
+	Data     []byte
+}
+
+// Attachment kinds. Kind picks the platform sender: images get the platform's
+// image upload path, audio and video their native media bubbles, and anything
+// else is delivered as a document.
+const (
+	AttachmentKindImage = "image"
+	AttachmentKindAudio = "audio"
+	AttachmentKindVideo = "video"
+	AttachmentKindFile  = "file"
+)
+
 // StreamEvent is a single event in a streaming response.
 type StreamEvent struct {
 	Type      string

@@ -231,6 +231,45 @@ func (c *IMController) Stop() error {
 	return err
 }
 
+// SendAttachment forwards to the running engine, so a host that holds only the
+// controller can still push files to a conversation.
+//
+// The engine is copied under the lock and used after releasing it: a send can
+// take as long as the platform's upload, and holding the gate that long would
+// block Stop for its whole duration.
+func (c *IMController) SendAttachment(sessionKey, message string, atts []Attachment) error {
+	c.mu.Lock()
+	engine := c.engine
+	c.mu.Unlock()
+	if engine == nil {
+		return fmt.Errorf("IM bridge is not running")
+	}
+	return engine.SendAttachment(sessionKey, message, atts)
+}
+
+// SendFileToSession forwards to the running engine.
+func (c *IMController) SendFileToSession(sessionKey, message, path string) error {
+	c.mu.Lock()
+	engine := c.engine
+	c.mu.Unlock()
+	if engine == nil {
+		return fmt.Errorf("IM bridge is not running")
+	}
+	return engine.SendFileToSession(sessionKey, message, path)
+}
+
+// ActiveSessionKeys forwards to the running engine. It returns nil when the
+// bridge is not running.
+func (c *IMController) ActiveSessionKeys() []string {
+	c.mu.Lock()
+	engine := c.engine
+	c.mu.Unlock()
+	if engine == nil {
+		return nil
+	}
+	return engine.ActiveSessionKeys()
+}
+
 // Status returns a human-readable status string.
 func (c *IMController) Status() string {
 	c.mu.Lock()
