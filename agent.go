@@ -102,6 +102,11 @@ func (s *Session) Send(prompt string, messageID string, images []core.ImageAttac
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
+	if !s.Alive() {
+		s.mu.Unlock()
+		cancel()
+		return fmt.Errorf("session %s is closed", s.sessionID)
+	}
 	// Cancel any previous in-flight stream for this session.
 	if s.cancel != nil {
 		s.cancel()
