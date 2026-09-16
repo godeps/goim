@@ -36,6 +36,24 @@ type StreamEvent struct {
 	Delta     *Delta      // text delta (for content events)
 	Output    interface{} // tool output or error message
 	SessionID string
+	// Permission request fields (for EventPermissionRequest).
+	RequestID    string      // unique ID for matching user response
+	ToolInputRaw interface{} // raw tool input for display
+	Questions    []Question  // structured questions (optional)
+}
+
+// Question is a structured permission question (mirrors cc-connect core.UserQuestion).
+type Question struct {
+	Question    string
+	Header      string
+	Options     []QuestionOption
+	MultiSelect bool
+}
+
+// QuestionOption is one choice in a Question.
+type QuestionOption struct {
+	Label       string
+	Description string
 }
 
 // Delta carries incremental text content.
@@ -52,4 +70,5 @@ const (
 	EventToolExecutionOutput = "tool_execution_output"
 	EventError               = "error"
 	EventMessageStop         = "message_stop"
+	EventPermissionRequest   = "permission_request" // agent requests user permission for a tool
 )

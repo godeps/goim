@@ -235,6 +235,19 @@ func (s *Session) consumeStream(ctx context.Context, stream <-chan StreamEvent) 
 						SessionID:  lastSessionID,
 					})
 				}
+
+			case EventPermissionRequest:
+				var rawInput map[string]any
+				if m, ok := evt.ToolInputRaw.(map[string]any); ok {
+					rawInput = m
+				}
+				s.emitEvent(core.Event{
+					Type:         core.EventPermissionRequest,
+					ToolName:     evt.Name,
+					ToolInputRaw: rawInput,
+					RequestID:    evt.RequestID,
+					SessionID:    lastSessionID,
+				})
 			}
 		}
 	}
@@ -248,7 +261,16 @@ func (s *Session) emitEvent(evt core.Event) {
 	}
 }
 
-func (s *Session) RespondPermission(_ string, _ core.PermissionResult) error {
+// PermissionResolver is optionally implemented by a Runtime to receive
+// user permission decisions (Allow/Deny) from the IM platform.
+type PermissionResolver interface {
+	ResolvePermission(reqID string, result core.PermissionResult) error
+}
+
+func (s *Session) RespondPermission(reqID string, result core.PermissionResult) error {
+	if rp, ok := s.runtime.(PermissionResolver); ok {
+		return rp.ResolvePermission(reqID, result)
+	}
 	return nil
 }
 
