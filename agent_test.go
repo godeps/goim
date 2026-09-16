@@ -161,6 +161,144 @@ done:
 	}
 }
 
+// TestSession_ConsumeStream_MessageStopIsNotTerminal pins the turn boundary.
+//
+// saker emits message_stop at the end of each assistant message and runs that
+// iteration's tool calls afterwards, so a message_stop must not end the turn:
+// cc-connect exits its turn loop on Done=true alone, which handed the user the
+// intermediate segment as their answer and pushed the tool approval requests
+// that followed into the unsolicited reader. Only the closed stream ends a turn.
+func TestSession_ConsumeStream_MessageStopIsNotTerminal(t *testing.T) {
+	ch := make(chan StreamEvent, 6)
+	ch <- StreamEvent{Type: EventContentBlockDelta, Delta: &Delta{Text: "thinking"}, SessionID: "s1"}
+	ch <- StreamEvent{Type: EventMessageStop, SessionID: "s1"}
+	ch <- StreamEvent{Type: EventToolExecutionStart, Name: "bash", SessionID: "s1"}
+	ch <- StreamEvent{Type: EventToolExecutionResult, Name: "bash", Output: "ok", SessionID: "s1"}
+	ch <- StreamEvent{Type: EventContentBlockDelta, Delta: &Delta{Text: "done"}, SessionID: "s1"}
+	ch <- StreamEvent{Type: EventMessageStop, SessionID: "s1"}
+	close(ch)
+
+	s := newSession(nil, "s1")
+	go s.consumeStream(context.Background(), ch)
+
+	var results []core.Event
+	deadline := time.After(2 * time.Second)
+collect:
+	for {
+		select {
+		case evt, ok := <-s.events:
+			if !ok {
+				t.Fatal("event channel closed before the turn ended")
+			}
+			if evt.Type != core.EventResult {
+				continue
+			}
+			results = append(results, evt)
+			if evt.Done {
+				break collect
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for events")
+		}
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results (two segments + terminal), got %d: %+v", len(results), results)
+	}
+	for i, r := range results[:2] {
+		if r.Done {
+			t.Errorf("result[%d] = %+v: a message_stop must not be terminal", i, r)
+		}
+	}
+	// The terminal result carries the whole turn rather than the last segment,
+	// because cc-connect renders the final reply from its content.
+	term := results[2]
+	if !term.Done {
+		t.Errorf("terminal result = %+v, want Done=true once the stream closes", term)
+	}
+	if term.Content != "thinkingdone" {
+		t.Errorf("terminal content = %q, want %q", term.Content, "thinkingdone")
+	}
+}
+
+// A turn that only calls tools produces no text. cc-connect's turn loop exits
+// solely on Done=true, so the terminal result has to go out anyway — otherwise
+// the turn stays open until it exhausts its idle timeout.
+func TestSession_ConsumeStream_TerminalResultWithoutText(t *testing.T) {
+	ch := make(chan StreamEvent, 2)
+	ch <- StreamEvent{Type: EventToolExecutionStart, Name: "bash", SessionID: "s1"}
+	ch <- StreamEvent{Type: EventToolExecutionResult, Name: "bash", Output: "ok", SessionID: "s1"}
+	close(ch)
+
+	s := newSession(nil, "s1")
+	go s.consumeStream(context.Background(), ch)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case evt, ok := <-s.events:
+			if !ok {
+				t.Fatal("event channel closed before the turn ended")
+			}
+			if evt.Type != core.EventResult {
+				continue
+			}
+			if !evt.Done {
+				t.Fatalf("result = %+v, want a terminal result for a text-free turn", evt)
+			}
+			if evt.Content != "" {
+				t.Errorf("content = %q, want empty for a text-free turn", evt.Content)
+			}
+			return
+		case <-deadline:
+			t.Fatal("timeout: a text-free turn emitted no terminal result")
+		}
+	}
+}
+
+// A cancelled stream must still release the turn. Send cancels the previous
+// in-flight stream when a new message supersedes it, and a foreground turn left
+// without a terminal result would wait out its whole idle timeout.
+func TestSession_ConsumeStream_CancelledStreamStillTerminates(t *testing.T) {
+	ch := make(chan StreamEvent, 1)
+	ch <- StreamEvent{Type: EventContentBlockDelta, Delta: &Delta{Text: "partial"}, SessionID: "s1"}
+
+	s := newSession(nil, "s1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.consumeStream(ctx, ch)
+
+	// Let the segment through first, so the cancellation lands mid-turn the way
+	// a superseding Send would.
+	select {
+	case evt, ok := <-s.events:
+		if !ok || evt.Type != core.EventText {
+			t.Fatalf("first event = %+v, want the text delta", evt)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for the text event")
+	}
+	cancel()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case evt, ok := <-s.events:
+			if !ok {
+				t.Fatal("event channel closed before the turn ended")
+			}
+			if evt.Type == core.EventResult && evt.Done {
+				if evt.Content != "partial" {
+					t.Errorf("terminal content = %q, want %q", evt.Content, "partial")
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("a cancelled stream left the turn without a terminal result")
+		}
+	}
+}
+
 func TestSession_ConsumeStream_ErrorEvent(t *testing.T) {
 	ch := make(chan StreamEvent, 2)
 	ch <- StreamEvent{

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/godeps/cc-connect/core"
 )
@@ -152,25 +153,42 @@ func (s *Session) Send(prompt string, messageID string, images []core.ImageAttac
 }
 
 func (s *Session) consumeStream(ctx context.Context, stream <-chan StreamEvent) {
+	// textBuf holds the assistant segment being accumulated; a message_stop
+	// closes one segment. turnBuf holds every segment of the turn, because the
+	// terminal result has to carry the whole turn's text — cc-connect renders
+	// the final reply from it, and the last segment is only part of the answer.
 	var textBuf strings.Builder
+	var turnBuf strings.Builder
 	var lastSessionID string
 
 	for {
 		select {
 		case <-ctx.Done():
+			// The stream was cancelled mid-turn — a later Send superseded it,
+			// or the session closed. Emit the terminal result anyway so a
+			// foreground turn still reading this session is released instead of
+			// waiting out its idle timeout. Best-effort: when the session is
+			// closing there is nobody left to read it.
+			s.emitEvent(core.Event{
+				Type:      core.EventResult,
+				Content:   turnBuf.String(),
+				SessionID: lastSessionID,
+				Done:      true,
+			})
 			return
 		case evt, ok := <-stream:
 			if !ok {
-				// Stream ended — emit final result.
-				text := textBuf.String()
-				if text != "" {
-					s.emitEvent(core.Event{
-						Type:      core.EventResult,
-						Content:   text,
-						SessionID: lastSessionID,
-						Done:      true,
-					})
-				}
+				// Stream ended — this is the turn boundary, and the only place
+				// a terminal result is emitted. It goes out even when the turn
+				// produced no text (tool calls only): cc-connect's turn loop
+				// exits solely on Done=true, so suppressing it would leave the
+				// turn open until it exhausts its idle timeout.
+				s.emitTerminal(ctx, core.Event{
+					Type:      core.EventResult,
+					Content:   turnBuf.String(),
+					SessionID: lastSessionID,
+					Done:      true,
+				})
 				return
 			}
 
@@ -182,6 +200,7 @@ func (s *Session) consumeStream(ctx context.Context, stream <-chan StreamEvent) 
 			case EventContentBlockDelta:
 				if evt.Delta != nil && evt.Delta.Text != "" {
 					textBuf.WriteString(evt.Delta.Text)
+					turnBuf.WriteString(evt.Delta.Text)
 					s.emitEvent(core.Event{
 						Type:      core.EventText,
 						Content:   evt.Delta.Text,
@@ -221,14 +240,23 @@ func (s *Session) consumeStream(ctx context.Context, stream <-chan StreamEvent) 
 				})
 
 			case EventMessageStop:
-				text := textBuf.String()
-				textBuf.Reset()
+				// Not a turn boundary. saker's kernels emit message_stop at the
+				// end of each assistant message and only then run that
+				// iteration's tool calls, so reporting Done=true here ended
+				// cc-connect's turn mid-flight: the user received the
+				// intermediate segment as their answer, and every tool approval
+				// request that followed landed in the unsolicited reader, which
+				// has no user turn to consult and denies them outright.
+				// Done=false is cc-connect's non-terminal result — its
+				// EventResult case continues reading the same turn — so the
+				// turn stays open until the stream closes.
 				s.emitEvent(core.Event{
 					Type:      core.EventResult,
-					Content:   text,
+					Content:   textBuf.String(),
 					SessionID: lastSessionID,
-					Done:      true,
+					Done:      false,
 				})
+				textBuf.Reset()
 
 			case EventToolExecutionOutput:
 				output := ""
@@ -286,6 +314,34 @@ func (s *Session) emitPermission(ctx context.Context, evt core.Event) {
 	case s.events <- evt:
 	case <-ctx.Done():
 	case <-s.done:
+	}
+}
+
+// terminalDeliveryWait bounds how long the turn's terminal result waits for a
+// reader. Delivery is immediate whenever a turn is reading the session, so
+// reaching this deadline means there is no turn left to close.
+const terminalDeliveryWait = 10 * time.Second
+
+// emitTerminal delivers the result that ends a turn. Unlike emitEvent it does
+// not drop the event when the buffer is full: this is the only signal
+// cc-connect's turn loop exits on, so losing it strands the turn until its idle
+// timeout expires. The wait is bounded because a buffer that stays full means
+// no turn is reading — a send with no receiver to wait for.
+func (s *Session) emitTerminal(ctx context.Context, evt core.Event) {
+	s.eventMu.RLock()
+	defer s.eventMu.RUnlock()
+	if !s.Alive() {
+		return
+	}
+	timer := time.NewTimer(terminalDeliveryWait)
+	defer timer.Stop()
+	select {
+	case s.events <- evt:
+	case <-s.done:
+	case <-ctx.Done():
+	case <-timer.C:
+		slog.Error("goim: terminal result undelivered; the turn stays open until its idle timeout",
+			"session", s.sessionID, "waited", terminalDeliveryWait)
 	}
 }
 
