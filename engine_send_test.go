@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/godeps/cc-connect/core"
 )
@@ -19,20 +20,24 @@ import (
 type sendStubPlatform struct {
 	name string
 
-	mu     sync.Mutex
-	texts  []string
-	images []core.ImageAttachment
-	files  []core.FileAttachment
-	audios [][]byte
-	videos [][]byte
+	mu      sync.Mutex
+	texts   []string
+	images  []core.ImageAttachment
+	files   []core.FileAttachment
+	audios  [][]byte
+	videos  [][]byte
+	handler core.MessageHandler
 }
 
 func newSendStubPlatform(name string) *sendStubPlatform {
 	return &sendStubPlatform{name: name}
 }
 
-func (p *sendStubPlatform) Name() string                    { return p.name }
-func (p *sendStubPlatform) Start(core.MessageHandler) error { return nil }
+func (p *sendStubPlatform) Name() string { return p.name }
+func (p *sendStubPlatform) Start(h core.MessageHandler) error {
+	p.handler = h
+	return nil
+}
 func (p *sendStubPlatform) Reply(_ context.Context, _ any, content string) error {
 	return p.Send(context.Background(), nil, content)
 }
@@ -293,5 +298,98 @@ func TestDetectMimeType(t *testing.T) {
 	}
 	if got := detectMimeType("empty", nil); got != "application/octet-stream" {
 		t.Errorf("detectMimeType(empty) = %q, want application/octet-stream", got)
+	}
+}
+
+// sendNamingRuntime reports a session ID of its own on every stream event, the
+// way saker does. cc-connect stores whatever the agent reports as that
+// conversation's agent_session_id, so the ID the runtime knows its conversation
+// by is a different string from the session_key cc-connect routes by. A stub
+// that echoes the session key back hides that split; this one reproduces it.
+type sendNamingRuntime struct{ agentSessionID string }
+
+func (r sendNamingRuntime) RunStream(_ context.Context, _ Request) (<-chan StreamEvent, error) {
+	ch := make(chan StreamEvent, 2)
+	ch <- StreamEvent{Type: EventContentBlockDelta, Delta: &Delta{Text: "hello"}, SessionID: r.agentSessionID}
+	ch <- StreamEvent{Type: EventMessageStop, SessionID: r.agentSessionID}
+	close(ch)
+	return ch, nil
+}
+
+// A tool sending a file into the chat knows its conversation only by the ID the
+// runtime gave it, and in gateway mode that ID is saker's own agent session ID —
+// not the cc-connect session key the engine routes by. Sending therefore has to
+// resolve one to the other. Before it did, every im_send_file call from the chat
+// failed with `no active session found`, because an agent session ID carries no
+// platform prefix for the outbound path to reconstruct a target from.
+func TestSendFileToSessionResolvesAgentSessionID(t *testing.T) {
+	const agentSessionID = "cli-1789424487680080138"
+
+	platform := newSendStubPlatform("stub")
+	cfg := DefaultConfig()
+	cfg.DataDir = t.TempDir()
+	cfg.Project.Name = "test"
+	engine := NewEngine(NewAgent(sendNamingRuntime{agentSessionID: agentSessionID}, "test"), []core.Platform{platform}, cfg)
+	if err := engine.Start(); err != nil {
+		t.Fatalf("start engine: %v", err)
+	}
+	defer func() { _ = engine.Stop() }()
+
+	if platform.handler == nil {
+		t.Fatal("engine did not install a message handler")
+	}
+	platform.handler(platform, &core.Message{
+		SessionKey: testSessionKey,
+		Platform:   "stub",
+		MessageID:  "m1",
+		UserID:     "user",
+		UserName:   "user",
+		Content:    "hello",
+		ReplyCtx:   testSessionKey,
+	})
+
+	// Wait for the turn to settle so cc-connect has recorded the agent ID the
+	// runtime reported; that record is the only link between the two IDs.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		known := false
+		for _, s := range engine.inner.GetSessions().AllSessions() {
+			if s.GetAgentSessionID() == agentSessionID {
+				known = true
+				break
+			}
+		}
+		if known {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("engine never recorded the agent session ID")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	path := filepath.Join(t.TempDir(), "notes.txt")
+	if err := os.WriteFile(path, []byte("body"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := engine.SendFileToSession(agentSessionID, "here it is", path); err != nil {
+		t.Fatalf("SendFileToSession(%q): %v", agentSessionID, err)
+	}
+
+	// The turn's own reply shares the recorded texts, so look for the caption
+	// among them rather than expecting it alone.
+	texts, _, files, _, _ := platform.snapshot()
+	if len(files) != 1 || files[0].FileName != "notes.txt" || string(files[0].Data) != "body" {
+		t.Errorf("files = %+v, want notes.txt carrying body", files)
+	}
+	caption := false
+	for _, txt := range texts {
+		if txt == "here it is" {
+			caption = true
+			break
+		}
+	}
+	if !caption {
+		t.Errorf("texts = %q, want them to include %q", texts, "here it is")
 	}
 }

@@ -42,15 +42,19 @@ func (e *Engine) Stop() error {
 
 // SendAttachment delivers a message and its attachments to an IM session.
 //
-// sessionKey identifies the target conversation. An empty key defers to
+// sessionKey identifies the target conversation. It accepts either a cc-connect
+// session key or the runtime's own session ID for that conversation — see
+// resolveSendTarget. An empty key, or one that resolves to nothing, defers to
 // cc-connect's resolution, which accepts exactly one active session when
-// attachments are present.
+// attachments are present and refuses an ambiguous send.
 //
 // Images and documents travel together in a single message. Audio and video
 // each need their own message because they route to the platform's per-media
 // sender; text combined with those is delivered first, so it reads as a
 // caption.
 func (e *Engine) SendAttachment(sessionKey, message string, atts []Attachment) error {
+	sessionKey = e.resolveSendTarget(sessionKey)
+
 	var images []core.ImageAttachment
 	var files, audios, videos []core.FileAttachment
 	for _, a := range atts {
@@ -98,6 +102,67 @@ func (e *Engine) SendAttachment(sessionKey, message string, atts []Attachment) e
 		}
 	}
 	return nil
+}
+
+// resolveSendTarget maps whatever ID a caller holds to the session key
+// cc-connect routes outbound messages by.
+//
+// A tool sending into the conversation only ever sees the runtime's own session
+// ID — saker reports "cli-...", for instance — because that is the ID carried
+// back on stream events, which cc-connect records as the conversation's agent
+// session. cc-connect keys its routing by session key ("feishu:oc_...:ou_...")
+// instead, and the session store is the only place the two are linked, so an
+// agent session ID has to be resolved through it. Such an ID carries no platform
+// prefix, so the outbound path cannot reconstruct a target from it either.
+//
+// Returning "" is not a failure. cc-connect then applies its own rules, which
+// accept the only session when exactly one is active and refuse an attachment
+// send when the choice would be ambiguous — so an unresolvable ID withholds the
+// file rather than dropping it into the wrong conversation.
+func (e *Engine) resolveSendTarget(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	// Already a session key: either the caller knows the conversation directly,
+	// or it is replaying a key it read back from this engine.
+	for _, key := range e.inner.ActiveSessionKeys() {
+		if key == id {
+			return id
+		}
+	}
+	if key := e.sessionKeyForAgentID(id); key != "" {
+		return key
+	}
+	// Neither form matched. A key carrying a platform prefix may still name a
+	// conversation cc-connect can reconstruct on its own, so pass it through
+	// untouched; anything else is an ID cc-connect has never seen, and the empty
+	// key gets it the single-active-session rule instead of a bare rejection.
+	if strings.Contains(id, ":") {
+		return id
+	}
+	return ""
+}
+
+// sessionKeyForAgentID finds the session key of the active conversation whose
+// agent session is the given ID. Only an active session qualifies: a stored one
+// whose user has since switched away would deliver into a conversation they
+// have left.
+func (e *Engine) sessionKeyForAgentID(id string) string {
+	sessions := e.inner.GetSessions()
+	if sessions == nil {
+		return ""
+	}
+	idToKey, activeIDs := sessions.SessionKeyMap()
+	for _, s := range sessions.AllSessions() {
+		if !activeIDs[s.ID] || s.GetAgentSessionID() != id {
+			continue
+		}
+		if key, ok := idToKey[s.ID]; ok {
+			return key
+		}
+	}
+	return ""
 }
 
 // SendFileToSession reads a local file and sends it to an IM session. The
