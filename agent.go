@@ -80,6 +80,8 @@ type Session struct {
 	alive     atomic.Bool
 	cancel    context.CancelFunc
 	mu        sync.Mutex
+	eventMu   sync.RWMutex
+	done      chan struct{}
 }
 
 func newSession(rt Runtime, sessionID string) *Session {
@@ -87,6 +89,7 @@ func newSession(rt Runtime, sessionID string) *Session {
 		runtime:   rt,
 		sessionID: sessionID,
 		events:    make(chan core.Event, 128),
+		done:      make(chan struct{}),
 	}
 	s.alive.Store(true)
 	return s
@@ -241,7 +244,7 @@ func (s *Session) consumeStream(ctx context.Context, stream <-chan StreamEvent) 
 				if m, ok := evt.ToolInputRaw.(map[string]any); ok {
 					rawInput = m
 				}
-				s.emitEvent(core.Event{
+				s.emitPermission(ctx, core.Event{
 					Type:         core.EventPermissionRequest,
 					ToolName:     evt.Name,
 					ToolInputRaw: rawInput,
@@ -254,10 +257,30 @@ func (s *Session) consumeStream(ctx context.Context, stream <-chan StreamEvent) 
 }
 
 func (s *Session) emitEvent(evt core.Event) {
+	s.eventMu.RLock()
+	defer s.eventMu.RUnlock()
+	if !s.Alive() {
+		return
+	}
 	select {
 	case s.events <- evt:
 	default:
 		slog.Warn("goim: event channel full, dropping event", "type", evt.Type)
+	}
+}
+
+// emitPermission applies backpressure because dropping approval requests leaves
+// the runtime waiting for a decision the user cannot make.
+func (s *Session) emitPermission(ctx context.Context, evt core.Event) {
+	s.eventMu.RLock()
+	defer s.eventMu.RUnlock()
+	if !s.Alive() {
+		return
+	}
+	select {
+	case s.events <- evt:
+	case <-ctx.Done():
+	case <-s.done:
 	}
 }
 
@@ -290,11 +313,14 @@ func (s *Session) Close() error {
 	if !s.alive.CompareAndSwap(true, false) {
 		return nil
 	}
+	close(s.done)
 	s.mu.Lock()
 	if s.cancel != nil {
 		s.cancel()
 	}
 	s.mu.Unlock()
+	s.eventMu.Lock()
 	close(s.events)
+	s.eventMu.Unlock()
 	return nil
 }
