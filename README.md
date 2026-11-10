@@ -1,6 +1,27 @@
 # goim
 
-A platform-agnostic IM gateway library for Go. Connect any AI agent backend to 20 chat platforms through a single `Runtime` interface.
+Go libraries for connecting agent runtimes to applications and chat platforms.
+
+## Modules
+
+| Module | Purpose | Go version |
+| --- | --- | --- |
+| [`github.com/godeps/goim/remote`](remote/README.md) | Embeddable device pairing, authenticated HTTP protocol, durable runs/events, exact approvals, cancellation and recovery | 1.25+ |
+| [`github.com/godeps/goim/runner`](runner/README.md) | Embedded native Codex / Claude Code SDK adapters with host-controlled workspace, environment and process supervision | 1.27+ |
+| `github.com/godeps/goim` | Existing IM gateway: connect a `Runtime` to 20 chat platforms through cc-connect | 1.25+ |
+
+The remote modules do not import the legacy root platform registry. A web
+application can depend on `remote` without taking on IM integrations or SDK
+runtime dependencies. A local client embeds `runner` inside its existing
+lifecycle; goim does not distribute a second end-user client executable.
+
+Hosts keep their account authentication, CSRF checks, document/resource grants
+and product UI. Local clients keep explicit workspace authorization, persistent
+execution journals and process ownership. The common protocol does not turn an
+IM message or a pairing code into unrestricted filesystem access. See the module
+READMEs for migration, retention, idempotency and process-stop contracts.
+
+The remainder of this README covers the existing IM gateway.
 
 [中文文档](#中文文档)
 

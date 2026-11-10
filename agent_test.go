@@ -2,6 +2,7 @@ package goim
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -335,11 +336,11 @@ func TestSession_Close_Idempotent(t *testing.T) {
 	}
 }
 
-func TestSession_RespondPermission_NoOp(t *testing.T) {
+func TestSession_RespondPermission_Unsupported(t *testing.T) {
 	s := newSession(nil, "s1")
 	defer s.Close()
 	err := s.RespondPermission("req-1", core.PermissionResult{Behavior: "allow"})
-	if err != nil {
-		t.Errorf("RespondPermission should be no-op, got: %v", err)
+	if !errors.Is(err, ErrPermissionUnsupported) {
+		t.Errorf("RespondPermission should reject unsupported runtime, got: %v", err)
 	}
 }

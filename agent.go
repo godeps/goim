@@ -3,6 +3,7 @@ package goim
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -19,7 +20,7 @@ type Agent struct {
 	name    string
 
 	mu       sync.Mutex
-	sessions map[string]*Session // sessionID -> active session
+	sessions map[*Session]struct{} // each new conversation has its own identity
 }
 
 // NewAgent creates a new Agent adapter around an existing Runtime.
@@ -30,7 +31,7 @@ func NewAgent(rt Runtime, name string) *Agent {
 	return &Agent{
 		runtime:  rt,
 		name:     name,
-		sessions: make(map[string]*Session),
+		sessions: make(map[*Session]struct{}),
 	}
 }
 
@@ -40,13 +41,28 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Reuse existing session if alive.
-	if s, ok := a.sessions[sessionID]; ok && s.Alive() {
-		return s, nil
+	// An empty ID starts a new conversation; it is never a shared map key.
+	for s := range a.sessions {
+		if !s.Alive() {
+			delete(a.sessions, s)
+			continue
+		}
+		if sessionID != "" && s.CurrentSessionID() == sessionID {
+			return s, nil
+		}
 	}
-
 	s := newSession(a.runtime, sessionID)
-	a.sessions[sessionID] = s
+	s.bindID = func(ctx context.Context, id string) error {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		for other := range a.sessions {
+			if other != s && other.Alive() && other.CurrentSessionID() == id {
+				return ErrNativeSessionConflict
+			}
+		}
+		return s.setSessionID(ctx, id)
+	}
+	a.sessions[s] = struct{}{}
 	return s, nil
 }
 
@@ -54,8 +70,8 @@ func (a *Agent) ListSessions(_ context.Context) ([]core.AgentSessionInfo, error)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	var infos []core.AgentSessionInfo
-	for id, s := range a.sessions {
-		if s.Alive() {
+	for s := range a.sessions {
+		if id := s.CurrentSessionID(); s.Alive() && id != "" {
 			infos = append(infos, core.AgentSessionInfo{ID: id})
 		}
 	}
@@ -65,9 +81,9 @@ func (a *Agent) ListSessions(_ context.Context) ([]core.AgentSessionInfo, error)
 func (a *Agent) Stop() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	for id, s := range a.sessions {
+	for s := range a.sessions {
 		s.Close()
-		delete(a.sessions, id)
+		delete(a.sessions, s)
 	}
 	return nil
 }
@@ -77,6 +93,7 @@ func (a *Agent) Stop() error {
 type Session struct {
 	runtime   Runtime
 	sessionID string
+	bindID    func(context.Context, string) error
 	events    chan core.Event
 	alive     atomic.Bool
 	cancel    context.CancelFunc
@@ -98,26 +115,28 @@ func newSession(rt Runtime, sessionID string) *Session {
 
 func (s *Session) Send(prompt string, messageID string, images []core.ImageAttachment, files []core.FileAttachment) error {
 	if !s.Alive() {
-		return fmt.Errorf("session %s is closed", s.sessionID)
+		return fmt.Errorf("session %s is closed", s.CurrentSessionID())
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
 	if !s.Alive() {
+		id := s.sessionID
 		s.mu.Unlock()
 		cancel()
-		return fmt.Errorf("session %s is closed", s.sessionID)
+		return fmt.Errorf("session %s is closed", id)
 	}
 	// Cancel any previous in-flight stream for this session.
 	if s.cancel != nil {
 		s.cancel()
 	}
 	s.cancel = cancel
+	sessionID := s.sessionID
 	s.mu.Unlock()
 
 	req := Request{
 		Prompt:    prompt,
-		SessionID: s.sessionID,
+		SessionID: sessionID,
 		MessageID: messageID,
 	}
 
@@ -149,7 +168,7 @@ func (s *Session) Send(prompt string, messageID string, images []core.ImageAttac
 	}
 
 	// Consume stream events in background, convert to core.Event.
-	go s.consumeStream(ctx, stream)
+	go func() { defer cancel(); s.consumeStream(ctx, stream) }()
 	return nil
 }
 
@@ -160,7 +179,7 @@ func (s *Session) consumeStream(ctx context.Context, stream <-chan StreamEvent) 
 	// the final reply from it, and the last segment is only part of the answer.
 	var textBuf strings.Builder
 	var turnBuf strings.Builder
-	var lastSessionID string
+	lastSessionID := s.CurrentSessionID()
 
 	for {
 		select {
@@ -194,6 +213,13 @@ func (s *Session) consumeStream(ctx context.Context, stream <-chan StreamEvent) 
 			}
 
 			if evt.SessionID != "" {
+				if err := s.adoptSessionID(ctx, evt.SessionID); err != nil {
+					if ctx.Err() == nil && s.Alive() {
+						s.emitEvent(core.Event{Type: core.EventError, Error: err, Content: err.Error(), SessionID: lastSessionID})
+						s.emitTerminal(ctx, core.Event{Type: core.EventResult, Content: turnBuf.String(), SessionID: lastSessionID, Done: true})
+					}
+					return
+				}
 				lastSessionID = evt.SessionID
 			}
 
@@ -368,7 +394,7 @@ func (s *Session) emitTerminal(ctx context.Context, evt core.Event) {
 	case <-ctx.Done():
 	case <-timer.C:
 		slog.Error("goim: terminal result undelivered; the turn stays open until its idle timeout",
-			"session", s.sessionID, "waited", terminalDeliveryWait)
+			"session", s.CurrentSessionID(), "waited", terminalDeliveryWait)
 	}
 }
 
@@ -382,7 +408,7 @@ func (s *Session) RespondPermission(reqID string, result core.PermissionResult) 
 	if rp, ok := s.runtime.(PermissionResolver); ok {
 		return rp.ResolvePermission(reqID, result)
 	}
-	return nil
+	return ErrPermissionUnsupported
 }
 
 // SteerUserInput forwards an answer to a Runtime that supports active turns.
@@ -391,7 +417,7 @@ func (s *Session) SteerUserInput(prompt string) (bool, error) {
 		return false, nil
 	}
 	if rt, ok := s.runtime.(UserInputSteerer); ok {
-		return rt.SteerUserInput(s.sessionID, prompt)
+		return rt.SteerUserInput(s.CurrentSessionID(), prompt)
 	}
 	return false, nil
 }
@@ -401,7 +427,35 @@ func (s *Session) Events() <-chan core.Event {
 }
 
 func (s *Session) CurrentSessionID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.sessionID
+}
+
+// ErrNativeSessionConflict prevents two live conversations sharing a runtime ID.
+var ErrNativeSessionConflict = errors.New("goim: native session ID belongs to another live conversation")
+
+// ErrPermissionUnsupported means the runtime cannot receive permission decisions.
+var ErrPermissionUnsupported = errors.New("goim: runtime does not support permission decisions")
+
+func (s *Session) adoptSessionID(ctx context.Context, id string) error {
+	if s.bindID != nil {
+		return s.bindID(ctx, id)
+	}
+	return s.setSessionID(ctx, id)
+}
+
+func (s *Session) setSessionID(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !s.Alive() {
+		return errors.New("goim: session closed")
+	}
+	s.sessionID = id
+	return nil
 }
 
 func (s *Session) Alive() bool {
