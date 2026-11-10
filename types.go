@@ -2,12 +2,27 @@
 // any Runtime (agent backend) to multiple chat platforms via cc-connect.
 package goim
 
-import "context"
+import (
+	"context"
+
+	"github.com/chenhg5/cc-connect/core"
+)
+
+// PermissionResult is the user's response to a permission request. Hosts can
+// use this alias without importing the underlying cc-connect module.
+type PermissionResult = core.PermissionResult
 
 // Runtime is the interface that host applications must implement to integrate
 // with goim. It receives user messages from IM platforms and streams back responses.
 type Runtime interface {
 	RunStream(ctx context.Context, req Request) (<-chan StreamEvent, error)
+}
+
+// UserInputSteerer is optionally implemented by a Runtime to deliver answers
+// to non-blocking questions into an active turn. Return false when the session
+// has no active turn so the engine can send the answer as a new message.
+type UserInputSteerer interface {
+	SteerUserInput(sessionID, prompt string) (bool, error)
 }
 
 // Request represents a user message forwarded from an IM platform.
@@ -60,6 +75,7 @@ type StreamEvent struct {
 	RequestID    string      // unique ID for matching user response
 	ToolInputRaw interface{} // raw tool input for display
 	Questions    []Question  // structured questions (optional)
+	ToolInput    string      // human-readable tool input or question context
 }
 
 // Question is a structured permission question (mirrors cc-connect core.UserQuestion).
@@ -91,4 +107,6 @@ const (
 	EventError               = "error"
 	EventMessageStop         = "message_stop"
 	EventPermissionRequest   = "permission_request" // agent requests user permission for a tool
+	EventUserInputRequest    = "user_input_request" // ask without blocking the active turn
+	EventThinking            = "thinking"           // processing status, separate from answer text
 )

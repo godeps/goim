@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/godeps/cc-connect/core"
+	"github.com/chenhg5/cc-connect/core"
 )
 
 // Engine wraps cc-connect's core.Engine with goim-specific configuration.

@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/godeps/cc-connect/core"
+	"github.com/chenhg5/cc-connect/core"
 )
 
 // Agent implements core.Agent by wrapping a Runtime.
@@ -126,6 +126,7 @@ func (s *Session) Send(prompt string, messageID string, images []core.ImageAttac
 		req.ContentBlocks = append(req.ContentBlocks, ContentBlock{
 			Type:      "image",
 			MediaType: img.MimeType,
+			FileName:  img.FileName,
 			Data:      base64.StdEncoding.EncodeToString(img.Data),
 		})
 	}
@@ -212,6 +213,7 @@ func (s *Session) consumeStream(ctx context.Context, stream <-chan StreamEvent) 
 				s.emitEvent(core.Event{
 					Type:      core.EventToolUse,
 					ToolName:  evt.Name,
+					ToolInput: evt.ToolInput,
 					SessionID: lastSessionID,
 				})
 
@@ -272,17 +274,42 @@ func (s *Session) consumeStream(ctx context.Context, stream <-chan StreamEvent) 
 					})
 				}
 
-			case EventPermissionRequest:
+			case EventThinking:
+				content := ""
+				if evt.Delta != nil {
+					content = evt.Delta.Text
+				} else if evt.Output != nil {
+					content = fmt.Sprint(evt.Output)
+				}
+				s.emitEvent(core.Event{Type: core.EventThinking, Content: content, SessionID: lastSessionID})
+
+			case EventPermissionRequest, EventUserInputRequest:
 				var rawInput map[string]any
 				if m, ok := evt.ToolInputRaw.(map[string]any); ok {
 					rawInput = m
 				}
+				questions := make([]core.UserQuestion, len(evt.Questions))
+				for i, q := range evt.Questions {
+					options := make([]core.UserQuestionOption, len(q.Options))
+					for j, option := range q.Options {
+						options[j] = core.UserQuestionOption{Label: option.Label, Description: option.Description}
+					}
+					questions[i] = core.UserQuestion{
+						Question: q.Question, Header: q.Header, Options: options, MultiSelect: q.MultiSelect,
+					}
+				}
+				eventType := core.EventPermissionRequest
+				if evt.Type == EventUserInputRequest {
+					eventType = core.EventUserInputRequest
+				}
 				s.emitPermission(ctx, core.Event{
-					Type:         core.EventPermissionRequest,
+					Type:         eventType,
 					ToolName:     evt.Name,
+					ToolInput:    evt.ToolInput,
 					ToolInputRaw: rawInput,
 					RequestID:    evt.RequestID,
 					SessionID:    lastSessionID,
+					Questions:    questions,
 				})
 			}
 		}
@@ -348,7 +375,7 @@ func (s *Session) emitTerminal(ctx context.Context, evt core.Event) {
 // PermissionResolver is optionally implemented by a Runtime to receive
 // user permission decisions (Allow/Deny) from the IM platform.
 type PermissionResolver interface {
-	ResolvePermission(reqID string, result core.PermissionResult) error
+	ResolvePermission(reqID string, result PermissionResult) error
 }
 
 func (s *Session) RespondPermission(reqID string, result core.PermissionResult) error {
@@ -356,6 +383,17 @@ func (s *Session) RespondPermission(reqID string, result core.PermissionResult) 
 		return rp.ResolvePermission(reqID, result)
 	}
 	return nil
+}
+
+// SteerUserInput forwards an answer to a Runtime that supports active turns.
+func (s *Session) SteerUserInput(prompt string) (bool, error) {
+	if !s.Alive() {
+		return false, nil
+	}
+	if rt, ok := s.runtime.(UserInputSteerer); ok {
+		return rt.SteerUserInput(s.sessionID, prompt)
+	}
+	return false, nil
 }
 
 func (s *Session) Events() <-chan core.Event {

@@ -2,7 +2,7 @@ package goim
 
 import (
 	"context"
-	"github.com/godeps/cc-connect/core"
+	"github.com/chenhg5/cc-connect/core"
 	"testing"
 	"time"
 )

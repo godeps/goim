@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godeps/cc-connect/core"
+	"github.com/chenhg5/cc-connect/core"
 )
 
 func TestAgent_Name(t *testing.T) {
