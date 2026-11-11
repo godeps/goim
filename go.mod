@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/chenhg5/cc-connect v1.5.2-beta.1.0.20261108144741-619f884c437c
 	github.com/godeps/claude-agent-sdk-go v0.3.8-0.20261110165047-2ec71aa46674
-	github.com/godeps/codex-sdk-go v0.5.1-0.20261110165045-0ec7b2ad7be2
+	github.com/godeps/codex-sdk-go v0.5.1-0.20261111040705-1924a3524a76
 	github.com/jackc/pgx/v5 v5.11.0
 	modernc.org/sqlite v1.52.0
 )

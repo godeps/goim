@@ -90,3 +90,38 @@ func TestStopFailureDoesNotBecomeCancelled(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexCompletedTurnShutdown(t *testing.T) {
+	for _, tc := range []struct {
+		mode      string
+		stopFails bool
+		want      string
+	}{
+		{"shutdown-interrupt", false, Completed},
+		{"shutdown-exit17", false, Failed},
+		{"basic", true, Unknown},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			e, req := fixture(t, "codex", tc.mode)
+			if tc.stopFails {
+				stop := req.StopProcess
+				req.StopProcess = func(cmd *exec.Cmd) error {
+					_ = stop(cmd)
+					return errors.New("owned process group unconfirmed")
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 9*time.Second)
+			defer cancel()
+			var text string
+			result, err := e.Run(ctx, req, func(ev Event) error {
+				if ev.Type == "text" {
+					text += ev.Text
+				}
+				return nil
+			}, func(context.Context, ApprovalRequest) (bool, error) { return false, nil })
+			if text != "hello" || result.State != tc.want || result.Stopped == tc.stopFails || (err == nil) != (tc.want == Completed) {
+				t.Fatalf("text=%q result=%+v err=%v", text, result, err)
+			}
+		})
+	}
+}

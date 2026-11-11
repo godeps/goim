@@ -12,6 +12,8 @@ to one service/account/conversation/agent/workspace binding.
 
 Terminal SDK events, not process exit alone, determine success. Missing terminal
 events are unknown. Cancellation requires native interruption and process stop.
+An explicit Codex completion survives a confirmed shutdown by the SDK’s own
+SIGINT. Unrequested process failures and unconfirmed group stops remain errors.
 
 Published SDK feature commits with command/approval hooks are pinned in the root go.mod.
 The host supplies both CommandHook and StopProcess. StopProcess must confirm

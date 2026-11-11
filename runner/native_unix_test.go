@@ -127,6 +127,15 @@ func TestNativeAgentPeer(t *testing.T) {
 			}
 		}
 	}
+	// Exercise real POSIX shutdown outcomes after an explicit native terminal
+	// event. An EOF on stdin need not terminate a direct app-server executable.
+	switch mode {
+	case "shutdown-interrupt":
+		time.Sleep(30 * time.Second)
+		os.Exit(8)
+	case "shutdown-exit17":
+		os.Exit(17)
+	}
 	os.Exit(0)
 }
 func fixture(t *testing.T, agent, mode string) (*Executor, Request) {
