@@ -71,7 +71,14 @@ func TestNativeAgentPeer(t *testing.T) {
 				write(map[string]any{"id": m["id"], "result": map[string]any{"thread": map[string]any{"id": "native-fixture"}}})
 			case "turn/start":
 				write(map[string]any{"id": m["id"], "result": map[string]any{"turn": map[string]any{"id": "turn-fixture", "status": "in_progress"}}})
-				if mode == "approval" || mode == "approval-twice" {
+				if mode == "tools" {
+					for _, kind := range []string{"commandExecution", "fileChange", "mcpToolCall"} {
+						for _, phase := range []string{"started", "completed"} {
+							write(map[string]any{"method": "item/" + phase, "params": map[string]any{"threadId": "native-fixture", "turnId": "turn-fixture", "item": map[string]any{"id": "tool-" + kind, "type": kind, "command": "pwd", "changes": []any{}, "server": "fixture", "tool": "read", "arguments": map[string]any{}, "status": "completed"}}})
+						}
+					}
+					finish("tools done")
+				} else if mode == "approval" || mode == "approval-twice" {
 					write(map[string]any{"id": "approval-fixture", "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": "native-fixture", "turnId": "turn-fixture", "itemId": "tool-fixture", "command": "pwd"}})
 				} else if mode == "cancel" {
 					write(map[string]any{"method": "item/agentMessage/delta", "params": map[string]any{"threadId": "native-fixture", "turnId": "turn-fixture", "itemId": "message-fixture", "delta": "waiting"}})
@@ -242,5 +249,25 @@ func TestNativeFailureIsNotSuccess(t *testing.T) {
 				t.Fatalf("result=%+v err=%v", result, err)
 			}
 		})
+	}
+}
+
+func TestNativeCamelCaseToolLifecycle(t *testing.T) {
+	e, req := fixture(t, "codex", "tools")
+	var got []string
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := e.Run(ctx, req, func(event Event) error {
+		if event.Type == "tool" || event.Type == "tool_result" {
+			if !json.Valid(event.Input) {
+				t.Fatal("invalid tool payload")
+			}
+			got = append(got, event.Type+":"+event.Tool)
+		}
+		return nil
+	}, func(context.Context, ApprovalRequest) (bool, error) { return false, fmt.Errorf("unexpected approval") })
+	want := "tool:command_execution,tool_result:command_execution,tool:file_change,tool_result:file_change,tool:mcp_tool_call,tool_result:mcp_tool_call"
+	if err != nil || result.State != Completed || strings.Join(got, ",") != want {
+		t.Fatalf("result=%+v events=%v err=%v", result, got, err)
 	}
 }
