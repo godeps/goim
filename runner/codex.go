@@ -8,6 +8,23 @@ import (
 	"io"
 )
 
+// codexToolName accepts both native camelCase frames and legacy snake_case items.
+func codexToolName(item codex.ThreadItem) string {
+	if item == nil {
+		return ""
+	}
+	switch item.ItemType() {
+	case "commandExecution", "command_execution":
+		return "command_execution"
+	case "fileChange", "file_change":
+		return "file_change"
+	case "mcpToolCall", "mcp_tool_call":
+		return "mcp_tool_call"
+	default:
+		return ""
+	}
+}
+
 func codexApproval(ctx context.Context, method string, params json.RawMessage, approve Approver) (json.RawMessage, error) {
 	legacy := false
 	switch method {
@@ -142,13 +159,13 @@ func (e *Executor) runCodex(ctx context.Context, req Request, emit Emitter, appr
 						return result, err
 					}
 				}
-			} else if event.Item != nil && (event.Item.ItemType() == "command_execution" || event.Item.ItemType() == "file_change" || event.Item.ItemType() == "mcp_tool_call") {
+			} else if codexToolName(event.Item) != "" {
 				payload, _ := json.Marshal(event.Item)
 				typ := "tool"
 				if event.Type == "item.completed" {
 					typ = "tool_result"
 				}
-				if err = emit(Event{Type: typ, Tool: event.Item.ItemType(), Input: payload}); err != nil {
+				if err = emit(Event{Type: typ, Tool: codexToolName(event.Item), Input: payload}); err != nil {
 					return result, err
 				}
 			}
