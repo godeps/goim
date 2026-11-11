@@ -1,6 +1,34 @@
 # goim
 
-A platform-agnostic IM gateway library for Go. Connect any AI agent backend to 20 chat platforms through a single `Runtime` interface.
+Go libraries for connecting agent runtimes to applications and chat platforms.
+
+## Packages
+
+All three import paths are packages of the single module `github.com/godeps/goim`.
+They share one `go.mod`, one module version, and require Go 1.27.4 or later.
+
+| Import path | Purpose |
+| --- | --- |
+| [`github.com/godeps/goim/remote`](remote/README.md) | Embed device pairing, the authenticated HTTP protocol, durable runs and events, approvals, cancellation and recovery |
+| [`github.com/godeps/goim/runner`](runner/README.md) | Run installed Codex and Claude Code with host-controlled workspaces, environments and process supervision |
+| `github.com/godeps/goim` | Connect a runtime to the IM platforms supported by the existing cc-connect gateway |
+
+A host that imports only `remote` does not compile or link the IM registry or
+native SDK adapters. A local client imports `runner` to add the execution
+adapters to its own process lifecycle. Neither package ships an executable.
+
+To migrate from the former nested modules, remove any `require` or `replace`
+for `github.com/godeps/goim/remote` or `github.com/godeps/goim/runner`, require
+one root module revision containing these packages, and run `go mod tidy`.
+The package import paths and wire protocol stay the same.
+
+Hosts keep their account authentication, CSRF checks, document/resource grants
+and product UI. Local clients keep explicit workspace authorization, persistent
+execution journals and process ownership. The common protocol does not turn an
+IM message or a pairing code into unrestricted filesystem access. See the package
+READMEs for migration, retention, idempotency and process-stop contracts.
+
+The remainder of this README covers the existing IM gateway.
 
 [中文文档](#中文文档)
 
@@ -14,6 +42,9 @@ A platform-agnostic IM gateway library for Go. Connect any AI agent backend to 2
 - **Rotating log** — automatic log rotation with size-based pruning
 
 ## Install
+
+Install the root module from a release containing the packages. To test an
+unreleased revision, replace `latest` with the reviewed commit SHA.
 
 ```bash
 go get github.com/godeps/goim@latest
