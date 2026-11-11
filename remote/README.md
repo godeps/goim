@@ -1,13 +1,13 @@
 # goim remote
 
-`github.com/godeps/goim/remote` is the reusable Go protocol core for connecting a
-user's local agent installation to an authenticated application. It is an
-independent Go module inside goim, with no dependency on goim's legacy root
-package and no third-party runtime dependencies. Go 1.25 or newer is required.
+The `github.com/godeps/goim/remote` package connects a user's local agent
+installation to an authenticated application. Its production code imports only
+the Go standard library. Use Go 1.27.4 or later and pin the root
+`github.com/godeps/goim` module when importing this package.
 
 The application owns account authentication, resource authorization and its UI.
 The local client owns workspace authorization, native process execution and a
-durable execution journal. The sibling `github.com/godeps/goim/runner` module
+durable execution journal. The sibling `github.com/godeps/goim/runner` package
 adapts native agent SDKs; this package does not ship a separate executable client.
 Lanner can use this protocol against Peek or another compatible host.
 
@@ -310,7 +310,7 @@ should use host archival storage and measure this backend's serialization cost.
 
 ## Verification
 
-From this module:
+From the repository root:
 
 ```sh
 go test -race ./...
@@ -323,14 +323,12 @@ exact approvals, cancellation versus stop confirmation, unknown recovery,
 safe retention, capacity reserves, strict JSON, redirect refusal and concurrent
 FileStore writers in separate operating-system processes.
 
-The separate `integration/` test module imports real SQL drivers without adding
-them to this package's runtime dependencies. It currently uses Go 1.27 for the
-host-aligned dependency set:
+The `remote/integration` test package imports real SQL drivers. The root module
+records their versions, but importing `remote` does not link them into a host:
 
 ```sh
-cd integration
-go test -race ./...       # SQLite always runs; PostgreSQL requires a test DSN.
-python3 run_disposable_postgres.py
+go test -race ./remote/integration  # SQLite always runs; PostgreSQL requires a test DSN.
+python3 remote/integration/run_disposable_postgres.py
 ```
 
 The Python command uses an already available postgres:16 Docker image, creates a
@@ -342,4 +340,4 @@ concurrent idempotent runs, one successful claim, durable ACK after reconnection
 principal isolation and immediate cross-instance revocation.
 
 These are protocol and database tests. Native Codex/Claude SDK process behavior
-is tested by the separate runner module and the embedding client.
+is tested by the runner package and the embedding client.

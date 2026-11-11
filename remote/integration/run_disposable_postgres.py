@@ -57,8 +57,8 @@ def main():
         )
         print("Running SQLite and disposable PostgreSQL integration tests.", flush=True)
         result = subprocess.run(
-            ["go", "test", "-race", "-v", "./..."],
-            cwd=Path(__file__).resolve().parent, env=env,
+            ["go", "test", "-race", "-count=1", "-v", "./remote/integration"],
+            cwd=Path(__file__).resolve().parents[2], env=env,
         )
         return result.returncode
     finally:

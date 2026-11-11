@@ -1,6 +1,0 @@
-github.com/godeps/claude-agent-sdk-go v0.3.8-0.20261110165047-2ec71aa46674 h1:QJzIXWkTpweySOjA76YZ1Sc6AGlnA7a7iM3FrpeJtn4=
-github.com/godeps/claude-agent-sdk-go v0.3.8-0.20261110165047-2ec71aa46674/go.mod h1:Q51yl/11FHVfhlFpts5Dzx0AImQjqLBH1J0Wfk+LbMY=
-github.com/godeps/codex-sdk-go v0.5.1-0.20261110165045-0ec7b2ad7be2 h1:KxvCYmxfsTPlFlVmhboU7AiiT1Np1uOnyc6mlJ750Y4=
-github.com/godeps/codex-sdk-go v0.5.1-0.20261110165045-0ec7b2ad7be2/go.mod h1:DFuH5F6kOQv5wcidWWThzz31Kvl6qs2F1Qmz1dIGSJs=
-github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
-github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
